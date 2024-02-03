@@ -1,5 +1,5 @@
 ---
-title: Análise Medicações Sus
+title: Análise de Compras de Medicamentos, Banco de Preços de Saúde (BPS)
 author: "Thais Pereira"
 date: "`r format(Sys.Date(), format='%d/%m/%Y')`"
 output:
@@ -20,7 +20,12 @@ editor_options:
 # bibliotecas
 
 library("tidyverse")
+library("dplyr")
 library("ggplot2")
+library("stringr")
+library("reactable")
+library("ggrepel")
+
 
 ```
 
@@ -40,7 +45,8 @@ library("ggplot2")
 ```{r include=FALSE}
 
 
-# baixando os dados
+# baixando os dados do github, para que não fique na minha máquina e impeça a reprodução da análise
+# poderia também ter lido os dados do google sheets usando a biblioteca 'googlesheets4'
 
 file1 <- "https://raw.githubusercontent.com/thais01fernandes/analise_medicamentos_sus/master/BPS_2022.xlsx%20-%202022.csv"
 dados <- read_delim(file1, delim = ",",
@@ -49,16 +55,405 @@ dados <- read_delim(file1, delim = ",",
 
 ```
 
+
+```{r include=FALSE}
+
+# Os dados de preço, total e unitário, além do qtd de itens comprados veio em caracter, tranformei em numérico para fazer os resumos dos dados
+# não tínhamos os dados de região, resolvi inserir por ser importante para algumas análises
+
+
+dados_2 <- dados %>% janitor::clean_names() %>% 
+  mutate(qtd_itens_numerico = as.numeric(str_remove_all(qtd_itens_comprados, "\\."))) %>% 
+  mutate(preco_total_numerico = as.numeric(str_replace_all(preco_total, "[^0-9,]", "") %>% 
+  str_replace_all(",", "."))) %>% 
+  mutate(preco_unitario_numerico = as.numeric(str_replace_all(preco_unitario, "[^0-9,]", "") %>% 
+  str_replace_all(",", "."))) %>% 
+  mutate(regiao = case_when(uf =="CE" ~ "Nordeste",
+                                                      uf == "SP" ~ "Sudeste", 
+                                                      uf == "PR" ~ "Sudeste",
+                                                      uf == "RS" ~ "Sul", 
+                                                      uf == "SC"  ~ "Sul",
+                                                      uf == "ES" ~ "Sudeste",
+                                                      uf == "SE"  ~ "Nordeste",
+                                                      uf == "RJ" ~ "Sudeste", 
+                                                      uf == "PE" ~ "Nordeste",
+                                                      uf == "MG" ~ "Sudeste", 
+                                                      uf == "PB"  ~ "Nordeste",
+                                                      uf == "PR" ~ "Sul",
+                                                      uf == "MS"  ~ "Centro-Oeste",
+                                                      uf == "RO" ~ "Norte",
+                                                      uf == "AL" ~ "Nordeste", 
+                                                      uf == "GO"  ~ "Centro-Oeste",
+                                                      uf == "BA" ~ "Nordeste",
+                                                      uf == "TO"  ~ "Norte",
+                                                      uf == "PA"  ~ "Norte",
+                                                      uf == "PI" ~ "Nordeste",
+                                                      uf == "MT"  ~ "Centro-Oeste",
+                                                      TRUE~(uf)))
+
+
+
+```
+
+
 ## **Introdução**
+
+Esse é um relatório produzido a partir do Banco de Preços de Saúde (BPS) do governo federal, com dados de 2022. Vamos fazer algumas análises exploratórias para ter uma visão geral das compras de insumos médico-hospitalares pelos estados e municípios brasileiros.  
 
 ## **Visão geral de compras**
 
-## **Comportamento de compras**
+Começamos verificando quais estados brasileiros mais compraram insumos médico-hospitalares. Para melhor visualizar esse dados colocamos em ordem crescente de compra os estados num gráfico de barras. A princípio imaginaríamos que São Paulo seria um outlier nos dados, por ser a capital mais populosa do país, no entando os dados mostram que o Ceará está no topo da lista e comprou mais da metade dos insumos comprados pelos estados em 2022. No entanto, é importante lembrar que esses dados são autodeclarados pelos órgãos públicos, não sendo obrigatório o cadastro das compras nesse sistema. Esse resultado pode indicar que o estado do Ceará têm feito essa inserção com maior assiduidade do que os outros estados. No gráfico também podemos ver que as regiões sudeste e sul estão mais presentes na base de dados, e o nordeste apenas em relação ao Ceará, às demais regiões aparecem em menor medida, com percentuais abaixo de zero. 
+
+
+```{r}
+
+regiao <- dados_2 %>% 
+  select(uf, regiao) %>% 
+  group_by(uf, regiao) %>% 
+  tally() %>% 
+  select(-n)
+  
+
+dados_2 %>% 
+  select(regiao, uf, qtd_itens_numerico) %>% 
+  group_by(uf) %>%
+  summarize(total = sum(qtd_itens_numerico)) %>% 
+  mutate(pct = total/sum(total)) %>% 
+  inner_join(regiao, by = "uf") %>% 
+  ggplot() +
+  geom_col(aes(x = reorder(uf, -pct), y =  pct, fill = regiao), width = 1,colour="white", alpha = 0.6) + 
+  xlab("") +
+  ylab("") +
+  ggtitle( "") +
+scale_fill_manual(name = "Região:", values = c("#4b895a", "#b16673", "#4e8397", "#c57d4b",'darkgray'), labels = c("Centro-Oeste", "Nordeste", "Sul", "Sudeste", "Norte")) +
+  scale_y_continuous(labels = scales::percent_format(accuracy = 1)) +
+  geom_label(aes(x = uf, y = pct, group = regiao, label = scales::percent(pct, accuracy = 3)), 
+             position = position_identity(),family = "serif", size = 3, colour = "white", fill = "#c18d83", face = "bold")+
+  theme_minimal()
+  
+
+
+```
+
+
+Também olhamos os principais fornecedores e listamos na tabela abaixo um ranking dos dez mais presentes e seu percentual de vendas em relação à todos os fornecedores presentes na base de dados. Podemos verificar na tabela que não há um fornecedor com percentual de vendas muito maior do que a maioria, o máximo de vendas que um fornecedor consegue é 6% do total, podemos dizer que não temos um fornecedor com grande monopólio, como acontece em outros setores. 
+
+
+```{r}
+
+dados_2 %>% 
+  group_by(fabricante) %>% 
+  tally() %>% 
+  mutate(pct = n/sum(n)) %>% 
+  arrange(-pct) %>% 
+  slice_max(pct, n = 10) %>% 
+  mutate_if(is.character, str_to_title) %>% 
+  select(-n) %>% 
+  reactable(
+      outlined = F, 
+      fullWidth = F,
+      bordered = T,
+      striped = F,
+      defaultColDef = colDef(
+      align = "center",
+      headerStyle = list(background = "#c18d83")),
+      columns = list(
+      fabricante = colDef("Fornecedor", align = "center", minWidth = 400),
+      pct = colDef("Percentual de vendas", align = "center", format = colFormat(percent = TRUE, digits = 1), minWidth = 150)))
+  
+
+
+```
+
+Olhando agora os fornecedores e sua presença nas regiões, podemos ver que também não há monopólios grandes. A fornecedora Medigram tem 9% de vendas na região Sul sendo a empresa que mais vende para uma determinada região, no entando os outros percentual são bem próximos, no sudeste podemos imaginar que tenha mais variedade de fornecedores, já que a empresa que mais vende, alcança apenas 3% do total de vendas na região. 
+
+```{r}
+
+dados_2 %>% 
+  group_by(regiao, fornecedor) %>% 
+  tally() %>% 
+  mutate(pct = n/sum(n)) %>% 
+  slice_max(n, n= 1) %>% 
+  select(-n) %>% 
+  mutate_if(is.character, str_to_title) %>% 
+   reactable(
+      outlined = F, 
+      fullWidth = F,
+      bordered = T,
+      striped = F,
+      defaultColDef = colDef(
+      align = "center",
+      headerStyle = list(background = "#c18d83")),
+      columns = list(
+      regiao = colDef("Regiao", align = "center", minWidth = 200),
+      fornecedor = colDef("Fornecedor", align = "center", minWidth = 600),
+      pct = colDef("Percentual de Vendas na Região", align = "center", format = colFormat(percent = TRUE, digits = 1), minWidth = 150)))
+  
+
+
+```
+
 
 ## **Comportamento de compras**
+
+Analisando o alcance das fornecedoras em relação à quantidade de cidades e estados, selecionamos para essa análise as cinco regiões que fornecem insumos para a maior quantidade de cidades, e podemos ver que apenas uma empresa alcança mais de cem cidades, a Inovamed, ela também está presente em 15 estados em 5 regiões. Isso nos mostra que algumas empresas, não apenas uma ou duas, não tem um carácter regional, mas possuem capacidade de fornecimento para muitas cidades e regiões ao mesmo tempo. 
+
+
+```{r}
+
+uf  <- dados_2 %>% 
+  group_by(fornecedor) %>% 
+  summarise(num_uf = n_distinct(uf)) %>% 
+  arrange(-num_uf)
+
+
+rg  <- dados_2 %>% 
+  group_by(fornecedor) %>% 
+  summarise(num_regiao = n_distinct(regiao)) %>% 
+  arrange(-num_regiao)
+
+dados_2 %>% 
+  group_by(fornecedor) %>% 
+  summarise(num_cidades = n_distinct(municipio_instituicao)) %>% 
+  arrange(-num_cidades) %>% 
+  left_join(uf, by = "fornecedor") %>% 
+  left_join(rg, by = "fornecedor") %>% 
+  slice_max(num_cidades, n = 5) %>% 
+  mutate_if(is.character, str_to_title) %>% 
+  reactable(
+      outlined = F, 
+      fullWidth = F,
+      bordered = T,
+      striped = F,
+      defaultColDef = colDef(
+      align = "center",
+      headerStyle = list(background = "#c18d83")),
+      columns = list(
+      fornecedor = colDef("Fornecedor", align = "center", minWidth = 400),
+      num_cidades = colDef("Qtd de cidades", align = "center", minWidth = 150),
+      num_uf = colDef("Qtd de estados", align = "center", minWidth = 150), 
+      num_regiao = colDef("Qtd de regiões", align = "center", minWidth = 150)))
+  
+
+```
+
 
 ## **Preço pago por item**
 
 
+Para fazer uma análise de preços de medicamentos, escolhemos o medicamento "LOSARTANA POTÁSSICA, DOSAGEM:50 MG" para uma análise mais detalhada. Estávamos interessados em saber qual estado pagou o preço máximo por esse insumo, e para uma visualização mais detalhada produzimos uma tabela com a informação de todas as compras desse remédio. Observando a tabela descobrimos que a maioria dos estados pagaram menos de R$ 1 real sendo que o Pauí chegou a pagar 172 reais. Mesmo Ceará e São Paulo tendo pagado um valor acima que os demais estados, cerca de 4 e 5 vezes a mais, o valor do Paiuí parece incorreto. Para seguir com as análises a recomendação seria checar esse valor ou tirar da base de dados para uma análise mais fidedigna, como mostraremos a seguir esse valor pode gerar ruídos em médias por região, por exemplo. De qualquer forma, o valor desse insumo variou bastante entre as diferentes compras, chegando a custar 4 centavos em algumas compras e quase 1 real em outras. 
 
+
+
+```{r}
+
+# qual estado pagou o preço máximo e qual pagou preço mínimo
+
+dados_2 %>% 
+    filter(descricao_catmat == "LOSARTANA POTÁSSICA, DOSAGEM:50 MG") %>% 
+    select(preco_unitario_numerico, uf) %>% 
+    arrange(-preco_unitario_numerico) %>% 
+    select(uf, preco_unitario_numerico) %>% 
+    reactable(
+      searchable = T,
+      outlined = F, 
+      fullWidth = F,
+      bordered = T,
+      striped = F,
+      defaultColDef = colDef(
+      align = "center",
+      headerStyle = list(background = "#c18d83")),
+      columns = list(
+      uf = colDef("Estado", align = "center", minWidth = 100),
+      preco_unitario_numerico = colDef("preço unitário", format = colFormat(prefix = "R$ ", separators = TRUE), minWidth = 150),
+      qtd_itens_comprados = colDef("Qtd de itens comprados", align = "center", minWidth = 150)))
+  
+
+
+```
+
+Para analisar as discrepâncias de preços desse mesmo medicamento entre os estados fizemos um gráfico, todavia retirando os valores referentes às compras do Ceará e do Paiuí, que destoam bastante do restante da base de dados e podem ser dados incorretos. Nessa análise usamos uma média de preços pagos pelo medicamento pelos estados, e podemos verificar que os valores flutuam entre 0,5 e 0,8 centavos, sendo que a região Sul pagou mais e a região norte pagou menos pelo mesmo medicamento. 
+
+
+```{r}
+
+# discrepancia de preço entre os estados sem os dois outliers, PI e CE
+
+
+dados_2 %>% 
+  filter(descricao_catmat == "LOSARTANA POTÁSSICA, DOSAGEM:50 MG") %>% 
+  group_by(uf) %>%
+  filter(uf != "PI" & uf != "CE") %>% 
+  summarise(media = mean(preco_unitario_numerico)) %>% 
+  mutate(media = round(media, 2)) %>% 
+  arrange(-media) %>% 
+  left_join(regiao, by = "uf") %>% 
+  ggplot() +
+  geom_col(aes(x = reorder(uf, -media), y =  media, fill = regiao), width = 1,colour="white", alpha = 0.6) + 
+  xlab("") +
+  ylab("") +
+  ggtitle( "") +
+  scale_y_continuous(
+  labels = scales::label_dollar(prefix = "R$ ",
+                                  big.mark = ".")) +
+scale_fill_manual(name = "Região:", values = c("#4b895a", "#b16673", "#4e8397", "#c57d4b",'darkgray'), labels = c("Centro-Oeste", "Nordeste", "Sudeste", "Sul", "Norte")) +
+  geom_label(aes(x = uf, y = media, label = media),
+             position = position_identity(),family = "serif", size = 3, colour = "white", fill = "#c18d83", face = "bold") +
+  theme_minimal()  
+  
+  
+
+
+```
+
+
+Para entender essa diferença de pagamento pelo mesmo item entre os diferentes estados e regiões brasileiras, olhamos se a unidade de medida comprada era a mesma, e vimos que de fato o medicamento foi comprado em comprimido por todas os estados, e também checamos se a quantidade comprada poderia estar influenciando o valor, ou seja, quanto maior a quantidade de itens do mesmo medicamento menor o valor pago na unidade. Para essa análise olhamos a quantidade média de itens desse medicamento comprado por todos os estados e colocamos num gráfico de barras que pode ser visualizado abaixo. Podemos ver que a quantidade comprada pelo Ceará e pelo Piaui de fato foi bem pequena, o que pode, em parte, explicar o preço maior pago. Minas Gerais no gráfico anterior pagou o maior valor médio pelo medicamento e no gráfico abaixo comprou a menor quantidade média do mesmo insumo. Os dados de Sergipe e Bahia também parecem confirmar essa hipótese.
+
+
+```{r}
+
+# Quantidade de itens comprados por estado
+
+
+dados_2 %>% 
+  filter(descricao_catmat == "LOSARTANA POTÁSSICA, DOSAGEM:50 MG") %>% 
+  group_by(uf) %>%
+  summarise(media = median(qtd_itens_numerico)) %>% 
+  mutate(media = round(media)) %>% 
+  arrange(-media) %>% 
+  left_join(regiao, by = "uf") %>% 
+  ggplot() +
+  geom_col(aes(x = reorder(uf, -media), y =  media, fill = regiao), width = 1,colour="white", alpha = 0.6) + 
+  xlab("") +
+  ylab("") +
+  ggtitle( "") +
+  scale_y_continuous(
+  labels = scales::label_dollar(prefix = " ",
+                                  big.mark = ".")) +
+scale_fill_manual(name = "Região:", values = c("#4b895a", "#b16673", "#4e8397", "#c57d4b",'darkgray'), labels = c("Centro-Oeste", "Nordeste", "Sudeste", "Sul", "Norte")) +
+  # geom_label(aes(x = uf, y = media, label = scales::dollar(big.mark = ".", prefix = " ", round(media, 1))),
+  #            position = position_identity(),family = "serif", size = 3, colour = "white", fill = "#c18d83", face = "bold") +
+  geom_text_repel(aes(x = uf, y = media, label = scales::dollar(big.mark = ".", prefix = " ", round(media, 1))), size = 2.5, hjust = 0.5, vjust = 1.5,point.padding = 0.6)+
+  theme_minimal()  
+  
+  
+
+
+```
+
+Por último olhamos o quanto cada região pagou por esse medicamento, fizemos uma coluna com os dois grandes outliers (PI e CE), apenas a título de verificação, e uma outra coluna sem os dois dados extremos. Percebemos que eles realmente fazem diferença nos valores médios e por isso é sempre útil olhar os dados no detalhe, com um histograma por exemplo, ou os valores máximos e mínimos da base de dados antes de olhar para os valores médios. A região sul foi a que pagou menos pelo insumo, seguido da região centro-oeste.
+
+
+
+```{r}
+
+# discrepancia de preço por regiao
+
+# PI e CE são outliers, entao vamos fazer a média dos preços por regiao com e sem esses dois estados
+
+sem_pi_ce <- dados_2 %>% 
+  filter(descricao_catmat == "LOSARTANA POTÁSSICA, DOSAGEM:50 MG") %>% 
+    filter(uf != "PI" & uf != "CE") %>% 
+  group_by(regiao) %>% 
+  summarise(media = mean(preco_unitario_numerico)) %>% 
+  arrange(-media)
+
+
+dados_2 %>% 
+  filter(descricao_catmat == "LOSARTANA POTÁSSICA, DOSAGEM:50 MG") %>% 
+  group_by(regiao) %>% 
+  summarise(media = mean(preco_unitario_numerico)) %>% 
+  arrange(-media) %>% 
+  left_join(sem_pi_ce, by = "regiao") %>% 
+  mutate(media.x = round(media.x, 2), media.y = round(media.y, 2)) %>% 
+  reactable(
+      outlined = F, 
+      fullWidth = F,
+      bordered = T,
+      striped = F,
+      defaultColDef = colDef(
+      align = "center",
+      headerStyle = list(background = "#c18d83")),
+      columns = list(
+      regiao = colDef("Estado", align = "center", minWidth = 100),
+      media.x = colDef("Média preco unitário", format = colFormat(prefix = "R$ ", separators = TRUE), minWidth = 150),
+      media.y = colDef("Média preço unitário sem outliers", format = colFormat(prefix = "R$ ", separators = TRUE), minWidth = 150)))
+  
+  
+
+
+```
+
+
+
+```{r include=FALSE}
+
+# qual insumo mais comprado?
+
+dados_2 %>% 
+  group_by(descricao_catmat) %>% 
+  tally() %>% 
+  arrange(-n)
+
+```
+
+A última análise diz respeito a modalidade de compra, gostaríamos de saber se ela influencia no preço do insumo. Para essa análise buscamos o insumo mais comprado no ano de 2022 e analisamos se o seu preço foi influenciado pela modalidade de compra. A tabela abaixo nos mostra que, de fato, há uma grande influencia, atavés da concorrência o insumo podemos custar menos da metade do valor que ele custa por meio Tomada de Preços. Seria necessário analisar mais insumos para confirmar essa hipótese, mas aqui podemos formular que a concorrência é a forma mais barata de se comprar insumos-médicos. Precisamos verificar numa análise mais detalhada se ela é a mais frequente, e onde ela é menos frequente.  
+
+
+```{r}
+
+# o preco do insumo mais comprado é influenciado pela modalidade de compra?
+
+
+dados_2 %>% 
+  filter(descricao_catmat == "CLORETO DE SÓDIO, PRINCÍPIO ATIVO:0,9%_ SOLUÇÃO INJETÁVEL, APLICAÇÃO:SISTEMA FECHADO") %>% 
+  group_by(modalidade_da_compra) %>% 
+  summarise(media = mean(preco_unitario_numerico, na.rm = TRUE)) %>% 
+  mutate(media = round(media, 2)) %>%
+  arrange(media) %>% 
+  reactable(
+       outlined = F, 
+      fullWidth = F,
+      bordered = T,
+      striped = F,
+      defaultColDef = colDef(
+      align = "center",
+      headerStyle = list(background = "#c18d83")),
+      columns = list(
+      modalidade_da_compra = colDef("Modalidade da Compra", align = "center", minWidth = 200),
+      media = colDef("Média de preço unitário", format = colFormat(prefix = "R$ ", separators = TRUE), minWidth = 150)))
+  
+
+```
+
+Devido ao resultado anterior resolvemos entender qual tipo de modalidade de compra é mais frequente, e descobrimos que apesar de produzir um valor menor de compra, a concorrência é uma das modalidades menos frequentes, enquanto o pregão é a modalidade mais frequente empregada para a compra de insumos-médios hospitalares. 
+
+```{r}
+
+dados_2 %>% 
+  group_by(modalidade_da_compra) %>% 
+  tally() %>% 
+  mutate(pct = n/sum(n)) %>% 
+  arrange(pct) %>%
+  select(-n) %>% 
+  reactable(
+       outlined = F, 
+      fullWidth = F,
+      bordered = T,
+      striped = F,
+      defaultColDef = colDef(
+      align = "center",
+      headerStyle = list(background = "#c18d83")),
+      columns = list(
+      modalidade_da_compra = colDef("Modalidade da Compra", align = "center", minWidth = 200),
+      pct = colDef("Média de preço unitário", format = colFormat(percent = TRUE, digits = 1), minWidth = 150)))
+  
+
+```
+
+
+## **Conclusão**
+
+
+Conduzimos nesse relatório uma breve análise da base de dados Compras de Medicamentos, Banco de Preços de Saúde (BPS). Com ela é possíve tirar vários insights que podem contribuir com a melhor gestão das compras públicas de insumos-médicos. Outras bases de dados públicas podem contribuir com essas análises, como a Munic, que disponibiliza informações básicas municipais, e seria interessante para entender as características dos munícípios e seus padrões de compras. Mas mesmo utilizando apenas essa base de dados já é possível obter muitas informações relevantes, pretemos seguir com as análises e aprofundar hipóteses levantadas nesse relatório. 
 
