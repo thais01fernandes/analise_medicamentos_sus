@@ -1,0 +1,64 @@
+---
+title: Análise Medicações Sus
+author: "Thais Pereira"
+date: "`r format(Sys.Date(), format='%d/%m/%Y')`"
+output:
+    html_document:
+      theme: flatly
+      self-contained: yes
+      toc: yes
+      toc_float: yes
+      css: 
+        - style.css
+editor_options: 
+  markdown: 
+    wrap: 72
+---
+
+```{r include=FALSE}
+
+# bibliotecas
+
+library("tidyverse")
+library("ggplot2")
+
+```
+
+
+```{r setup, include=FALSE}
+
+(knitr::opts_chunk$set(
+	echo = FALSE,
+	error = FALSE,
+	message = FALSE,
+	warning = FALSE
+)
+) 
+```
+
+
+```{r include=FALSE}
+
+
+# baixando os dados
+
+file1 <- "https://raw.githubusercontent.com/thais01fernandes/analise_medicamentos_sus/master/BPS_2022.xlsx%20-%202022.csv"
+dados <- read_delim(file1, delim = ",",
+                        locale = locale(encoding='UTF-8'))
+
+
+```
+
+## **Introdução**
+
+## **Visão geral de compras**
+
+## **Comportamento de compras**
+
+## **Comportamento de compras**
+
+## **Preço pago por item**
+
+
+
+
